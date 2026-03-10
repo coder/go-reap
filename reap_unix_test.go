@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -117,6 +118,81 @@ func TestReap_ReapChildren(t *testing.T) {
 	killAndCheck()
 	killAndCheck()
 	killAndCheck()
+
+	// Shut it down.
+	close(done)
+	select {
+	case <-didExit:
+		// Good - the goroutine shut down.
+	case <-time.After(1 * time.Second):
+		t.Fatalf("should have shut down")
+	}
+}
+
+func TestReap_ReapChildrenWithStatus(t *testing.T) {
+	statuses := make(StatusCh, 1)
+	errors := make(ErrorCh, 1)
+	done := make(chan struct{}, 1)
+
+	didExit := make(chan struct{}, 1)
+	go func() {
+		ReapChildrenWithStatus(statuses, errors, done, nil)
+		didExit <- struct{}{}
+	}()
+	time.Sleep(1 * time.Second)
+
+	// Spawn a child that exits with a known code.
+	cmd := exec.Command("/bin/sh", "-c", "exit 42")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	childPid := cmd.Process.Pid
+
+	select {
+	case cs := <-statuses:
+		if cs.Pid != childPid {
+			t.Fatalf("unexpected pid: %d != %d", cs.Pid, childPid)
+		}
+		ws := syscall.WaitStatus(cs.Status)
+		if !ws.Exited() {
+			t.Fatalf("expected normal exit, got status %v", ws)
+		}
+		if ws.ExitStatus() != 42 {
+			t.Fatalf("unexpected exit status: %d != 42", ws.ExitStatus())
+		}
+	case err := <-errors:
+		t.Fatalf("err: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("should have reaped %d", childPid)
+	}
+
+	// Spawn a child and kill it to verify signal status.
+	cmd = exec.Command("sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+	childPid = cmd.Process.Pid
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("err: %v", err)
+	}
+
+	select {
+	case cs := <-statuses:
+		if cs.Pid != childPid {
+			t.Fatalf("unexpected pid: %d != %d", cs.Pid, childPid)
+		}
+		ws := syscall.WaitStatus(cs.Status)
+		if !ws.Signaled() {
+			t.Fatalf("expected signal termination, got status %v", ws)
+		}
+		if ws.Signal() != syscall.SIGKILL {
+			t.Fatalf("unexpected signal: %v != SIGKILL", ws.Signal())
+		}
+	case err := <-errors:
+		t.Fatalf("err: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("should have reaped %d", childPid)
+	}
 
 	// Shut it down.
 	close(done)

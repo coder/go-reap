@@ -15,3 +15,7 @@ func IsSupported() bool {
 // ReapChildren is not supported so this always returns right away.
 func ReapChildren(pids PidCh, errors ErrorCh, done chan struct{}, reapLock *sync.RWMutex) {
 }
+
+// ReapChildrenWithStatus is not supported so this always returns right away.
+func ReapChildrenWithStatus(statuses StatusCh, errors ErrorCh, done chan struct{}, reapLock *sync.RWMutex) {
+}

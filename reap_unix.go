@@ -28,6 +28,34 @@ func IsSupported() bool {
 // processes with each other, but we do serialize them with reaping. The
 // application should get a read lock when it wants to do a wait.
 func ReapChildren(pids PidCh, errors ErrorCh, done chan struct{}, reapLock *sync.RWMutex) {
+	reapLoop(func(pid int, _ unix.WaitStatus) {
+		if pids != nil {
+			pids <- pid
+		}
+	}, errors, done, reapLock)
+}
+
+// ReapChildrenWithStatus works like ReapChildren but reports both
+// the PID and the raw wait status of each reaped child via a
+// StatusCh instead of a bare PidCh. This allows callers to
+// inspect exit codes and signal information without racing on
+// Wait4 themselves.
+func ReapChildrenWithStatus(statuses StatusCh, errors ErrorCh, done chan struct{}, reapLock *sync.RWMutex) {
+	reapLoop(func(pid int, status unix.WaitStatus) {
+		if statuses != nil {
+			statuses <- ChildStatus{
+				Pid:    pid,
+				Status: uint32(status),
+			}
+		}
+	}, errors, done, reapLock)
+}
+
+// reapLoop is the core reap loop shared by ReapChildren and
+// ReapChildrenWithStatus. On each reaped child it calls emit with
+// the PID and raw wait status; the caller decides what to do with
+// them (e.g. send to a PidCh or StatusCh).
+func reapLoop(emit func(pid int, status unix.WaitStatus), errors ErrorCh, done chan struct{}, reapLock *sync.RWMutex) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, unix.SIGCHLD)
 
@@ -63,9 +91,7 @@ func ReapChildren(pids PidCh, errors ErrorCh, done chan struct{}, reapLock *sync
 			case nil:
 				// Got a child, clean this up and poll again.
 				if pid > 0 {
-					if pids != nil {
-						pids <- pid
-					}
+					emit(pid, status)
 					goto POLL
 				}
 				return
