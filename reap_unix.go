@@ -1,4 +1,4 @@
-// +build !windows,!solaris
+//go:build !windows && !solaris
 
 package reap
 
