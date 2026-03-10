@@ -25,3 +25,16 @@ func TestReap_ReapChildren(t *testing.T) {
 	default:
 	}
 }
+
+func TestReap_ReapChildrenWithStatus(t *testing.T) {
+	statuses := make(StatusCh, 1)
+	errors := make(ErrorCh, 1)
+	ReapChildrenWithStatus(statuses, errors, nil, nil)
+	select {
+	case <-statuses:
+		t.Fatalf("should not report any statuses")
+	case <-errors:
+		t.Fatalf("should not report any errors")
+	default:
+	}
+}
